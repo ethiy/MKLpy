@@ -2,12 +2,11 @@
 import random
 import numpy as np
 from sklearn.metrics.pairwise import linear_kernel
-import types
 
 class Generator(object):
     p = 1
 
-    def __init__(self, n=10,base=linear_kernel):
+    def __init__(self, n=10, base=linear_kernel):
         self.n = n
         self.base = base
 
@@ -16,11 +15,8 @@ class Generator(object):
 
     def make_a_list(self, X, T=None):
         self.L = self.base(X,T) if self.base else None
-        T = X if type(T)==types.NoneType else T
-        KL = []
-        for i in range(self.n):
-            KL.append(self._next(X,T))
-        return KL
+        T = X if T is None else T
+        return [self._next(X,T) for i in range(self.n)]
 
 
 class HPK_generator(Generator):
@@ -30,6 +26,5 @@ class HPK_generator(Generator):
 
     def _next(self, X, T):
         p = self.p
-        K = self.L ** p
         self.p += 1
-        return kernel
+        return self.L ** p
