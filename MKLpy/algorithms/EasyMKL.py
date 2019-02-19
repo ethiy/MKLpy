@@ -37,42 +37,64 @@ class EasyMKL(BaseEstimator, ClassifierMixin, MKL):
 
         
     def _arrange_kernel(self):
-        Y = [1 if y==self.classes_[1] else -1 for y in self.Y]
+        Y = [
+            2 * int(y == self.classes_[1]) -1
+            for y in self.Y
+        ]
         n_sample = len(self.Y)
-        ker_matrix = matrix(summation(self.KL))
+        ker_matrix = matrix(
+            summation(self.KL)
+        )
         YY = spdiag(Y)
-        KLL = (1.0-self.lam)*YY*ker_matrix*YY
-        LID = spdiag([self.lam]*n_sample)
-        Q = 2*(KLL+LID)
-        p = matrix([0.0]*n_sample)
-        G = -spdiag([1.0]*n_sample)
-        h = matrix([0.0]*n_sample,(n_sample,1))
-        A = matrix([[1.0 if lab==+1 else 0 for lab in Y],[1.0 if lab2==-1 else 0 for lab2 in Y]]).T
-        b = matrix([[1.0],[1.0]],(2,1))
          
         solvers.options['show_progress'] = False
         solvers.options['maxiters'] = self.max_iter
-        sol = solvers.qp(Q,p,G,h,A,b)
-        gamma = sol['x']
+        sol = solvers.qp(
+            2 * (
+                (1.0 - self.lam) * YY * ker_matrix * YY 
+                +
+                spdiag([self.lam] * n_sample)
+            ),
+            matrix([0.0] * n_sample),
+            -spdiag([1.0] * n_sample),
+            matrix(
+                [0.0] * n_sample,
+                (n_sample, 1)
+            ),
+            matrix(
+                [
+                    [float(y == +1) for y in Y],
+                    [float(y == -1) for y in Y]
+                ]
+            ).T,
+            matrix(
+                [[1.0] * 2],
+                (2, 1)
+            )
+        )
         if self.verbose:
             print ('[EasyMKL]')
             print ('optimization finished, #iter = %d' % sol['iterations'])
             print ('status of the solution: %s' % sol['status'])
             print ('objval: %.5f' % sol['primal objective'])
 
-        yg = gamma.T * YY
-        weights = [(yg*matrix(K)*yg.T)[0] for K in self.KL]
-         
-        norm2 = sum([w for w in weights])
+        yg = sol['x'].T * YY
+        weights = [
+            (yg * matrix(K) * yg.T)[0]
+            for K in self.KL
+        ]
+        norm2 = sum(weights)
         self.weights = np.array([w / norm2 for w in weights])
-        ker_matrix = summation(self.KL, self.weights)
-        self.ker_matrix = ker_matrix
-        return ker_matrix
+
+        self.ker_matrix = summation(self.KL, self.weights)
+        return self.ker_matrix
 
  
     def get_params(self, deep=True):
         # this estimator has parameters:
-        return {"lam": self.lam,
-                "generator": self.generator, "max_iter":self.max_iter,
-                "verbose":self.verbose, "multiclass_strategy":self.multiclass_strategy,
-                'estimator':self.estimator}
+        return {
+            "lam": self.lam,
+            "generator": self.generator, "max_iter":self.max_iter,
+            "verbose":self.verbose, "multiclass_strategy":self.multiclass_strategy,
+            'estimator':self.estimator
+        }
