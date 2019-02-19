@@ -1,1 +1,7 @@
+# Git ignore
+
+# Python module binaries
 *.pyc
+
+# Installation files
+*.egg-info
