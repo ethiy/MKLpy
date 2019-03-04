@@ -1,5 +1,5 @@
 from sklearn.svm import SVC
-from sklearn.utils.multiclass import check_classification_targets
+from sklearn.utils.multiclass import check_classification_targets, is_multilabel
 from MKLpy.arrange import average
 from MKLpy.lists.generator import HPK_generator
 from MKLpy.utils.validation import process_list, check_KL_Y
@@ -39,7 +39,7 @@ class MKL(object):
 		self.classes_ = np.unique(Y)
 		if len(self.classes_) < 2:
 			raise ValueError("The number of classes has to be almost 2; got ", len(self.classes_))
-		self.multiclass_ = len(self.classes_) > 2
+		self.multiclass_ = len(self.classes_) > 2 or is_multilabel(Y)
 
 		KL = process_list(X,self.generator)				# X can be a samples matrix or Kernels List
 		self.KL, self.Y = check_KL_Y(KL,Y)
@@ -75,7 +75,7 @@ class MKL(object):
 		return self._arrange_kernel()
 
 
-	def _arrange_kernel(self,KL,Y):
+	def _arrange_kernel(self):
 		'''implemented in base class, return a kernel'''
 		raise NotImplementedError('Not implemented yet')
 
@@ -85,6 +85,12 @@ class MKL(object):
 			raise NotFittedError("This KOMD instance is not fitted yet. Call 'fit' with appropriate arguments before using this method.")
 		KL = process_list(X,self.generator)
 		return self.clf.predict(KL) if self.multiclass_ else self.estimator.predict(self.how_to(KL,self.weights))
+
+	def predict_proba(self,X):
+		if not self.is_fitted:
+			raise NotFittedError("This KOMD instance is not fitted yet. Call 'fit' with appropriate arguments before using this method.")
+		KL = process_list(X,self.generator)
+		return self.clf.predict_proba(KL) if self.multiclass_ else self.estimator.predict_proba(self.how_to(KL,self.weights))
 
 	def decision_function(self,X):
 		if not self.is_fitted:

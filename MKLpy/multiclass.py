@@ -12,6 +12,10 @@ import sys
 from cvxopt import matrix
 from sklearn.metrics.pairwise import polynomial_kernel
 from sklearn import svm
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.utils.validation import _num_samples
+import scipy.sparse as sp
+import array
 #from utils import HPK_generator
 from sklearn.metrics import roc_auc_score, accuracy_score
 
@@ -154,62 +158,99 @@ class OneVsRestMKLClassifier():
         self.classes_ = None
 
     def fit(self, K_list, Y):
-        n = len(Y)
-        classes_ = np.unique(Y)
-        n_classes = len(classes_)
-        labels = {}
-        for l in classes_:
-            labels.update({l: [1 if _y == l else -1 for _y in Y]})
-        weights = {}
-        clfs = {}
-        ker_matrices = {}
+        self.label_binarizer_ = LabelBinarizer(sparse_output=True)
+        Y = self.label_binarizer_.fit_transform(Y)
+        Y = Y.tocsc()
+        self.classes_ = self.label_binarizer_.classes_
+        columns = (col.toarray().ravel() for col in Y.T)
+        self.n_classes = len(self.classes_)
+        self.weights = {}
+        self.clfs = {}
+        self.ker_matrices = {}
 
         # learning the models
-        for model in classes_:
+        for cls_, column in zip(self.classes_, columns):
             # print 'learning model with ',model,' is the positive class'
             # learning the kernel
             cc1 = self.clf1.__class__(**self.clf1.get_params())
             cc1.kernel = 'precomputed'
-            ker_matrix = cc1.arrange_kernel(K_list, labels[model])
-            weights.update({model: cc1.weights})
+            ker_matrix = cc1.arrange_kernel(K_list, column)
+            self.weights.update({cls_: cc1.weights})
 
             # fitting the model
             cc2 = self.clf2.__class__(**self.clf2.get_params())
             cc2.kernel = 'precomputed'
-            cc2.fit(ker_matrix, labels[model])
-            clfs.update({model: cc2})
-            ker_matrices.update({model:ker_matrix})
-            # del ker_matrix, cc1
+            cc2.fit(ker_matrix, column)
+            self.clfs.update({cls_: cc2})
+            self.ker_matrices.update({cls_:ker_matrix})
+        
+        print(self.weights)
 
-        # save stuff
-        self.classes_ = classes_
         self.functional_form = self.clf1.how_to
-        # self.functional_form = lambda X,Y : self.clf1.how_to
-        self.weights = weights
-        self.clfs = clfs
-        self.n_classes = n_classes
-        self.classes_ = classes_
-        self.ker_matrices = ker_matrices
         self.is_fitted = True
         return self
 
     def predict(self, K_list):
         if not self.is_fitted:
-            raise Exception('huehuehue')
+            raise Exception('Not fitted')
         # predict with binary models
-        predicts = {}
-        nn = K_list[0].shape[0]
-        for model in self.classes_:
-            w = self.weights[model]
-            functional_form = self.functional_form
-            ker = functional_form(K_list, w)
-            clf = self.clfs[model]
-            predicts.update({model: clf.decision_function(ker)})
-        # voting
-        scoring = np.zeros((nn, self.n_classes))
-        for col, model in enumerate(self.classes_):
-            scoring[:, col] = predicts[model]
-        y_pred = np.array([self.classes_[np.argmax(sc)] for sc in scoring])
-        return y_pred
+        n_samples = _num_samples(K_list[0])
+        if self.label_binarizer_.y_type_ == "multiclass":
+            predicts = {
+                cls_:
+                clf.decision_function(
+                    self.functional_form(
+                        K_list,
+                        self.weights[cls_]
+                    )
+                )
+                for cls_, clf in self.clfs
+            }
+            scoring = np.zeros((n_samples, self.n_classes))
+            for col, cls_ in enumerate(self.classes_):
+                scoring[:, col] = predicts[cls_]
+            return np.array([self.classes_[np.argmax(sc)] for sc in scoring])
+        else:
+            indices = array.array('i')
+            indptr = array.array('i', [0])
+            for cls_, clf in self.clfs.items():
+                indices.extend(
+                    np.where(
+                        np.ravel(
+                            clf.decision_function(
+                                self.functional_form(
+                                    K_list,
+                                    self.weights[cls_]
+                                )
+                            )
+                        ) > 0
+                    )[0]
+                )
+                indptr.append(len(indices))
+            data = np.ones(len(indices), dtype=int)
+            indicator = sp.csc_matrix(
+                (data, indices, indptr),
+                shape=(n_samples, len(self.clfs))
+            )
+            return self.label_binarizer_.inverse_transform(indicator)
 
 
+    def predict_proba(self, K_list):
+        Y = np.array(
+            [
+                clf.predict_proba(
+                    self.functional_form(
+                        K_list,
+                        self.weights[cls_]
+                    )
+                )[:, 1]
+                for cls_, clf in self.clfs.items()
+            ]
+        ).T
+        if len(self.clfs) == 1:
+            Y = np.concatenate(((1 - Y), Y), axis=1)
+        
+        if not self.label_binarizer_.y_type_.startswith('multilabel'):
+            # Then, probabilities should be normalized to 1.
+            Y /= np.sum(Y, axis=1)[:, np.newaxis]
+        return Y
